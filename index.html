@@ -1,0 +1,615 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Seguimiento del barco</title>
+<link rel="icon" type="image/png" sizes="512x512" href="icono.png?v=3">
+<link rel="apple-touch-icon" href="icono.png?v=3">
+<meta name="apple-mobile-web-app-title" content="BravoSports">
+<meta name="application-name" content="BravoSports">
+<meta name="theme-color" content="#6e1414">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  :root { --fondo: #f4f6f8; --texto: #1d2a33; --tenue: #5b6b76; --caja: #ffffff; --acento: #c0392b; }
+  @media (prefers-color-scheme: dark) { :root { --fondo: #0d1820; --texto: #e3ebf0; --tenue: #93a5b1; --caja: #15242e; } }
+  html, body { margin: 0; height: 100%; background: var(--fondo); color: var(--texto);
+               font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  #mapa { position: absolute; inset: 0; }
+  #ficha { position: absolute; z-index: 1000; left: 12px; right: 12px; bottom: 16px; max-width: 420px;
+           background: var(--caja); border-radius: 10px; padding: 12px 14px; box-shadow: 0 2px 10px rgba(0,0,0,.25); }
+  #ficha h1 { font-size: 17px; margin: 0 0 4px; }
+  #plegar { all: unset; cursor: pointer; display: flex; justify-content: space-between; width: 100%; }
+  #plegar span { transition: transform .15s; }
+  /* plegada: solo el titulo y la linea de velocidad y viento */
+  #ficha.plegada > :not(h1):not(#txt) { display: none; }
+  #ficha.plegada #plegar span { transform: rotate(-90deg); }
+  #ficha .datos { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+  #ficha .tenue { color: var(--tenue); font-size: 13px; margin-top: 6px; }
+  .viejo { color: var(--acento); font-weight: 600; }
+  #ficha { max-height: 70vh; overflow-y: auto; }
+  .aviso { color: var(--acento); font-weight: 600; margin-top: 6px; }
+  details { margin-top: 8px; }
+  summary { cursor: pointer; font-weight: 600; }
+  table { border-collapse: collapse; width: 100%; margin-top: 4px; font-size: 13px; }
+  td { padding: 2px 6px 2px 0; white-space: nowrap; }
+  .rotulo { background: none; border: none; box-shadow: none; font: 600 12px system-ui, sans-serif; color: #7b1fa2;
+            text-shadow: 0 0 3px #fff, 0 0 3px #fff; padding: 0; }
+  .rotulo::before { display: none; }
+  .rotuloBarco { color: #c0392b; }
+  .graf svg { width: 100%; height: 56px; display: block; background: color-mix(in srgb, var(--tenue) 8%, transparent); border-radius: 4px; }
+  .graf { margin-top: 6px; }
+  .graf .eje { display: flex; justify-content: space-between; margin-top: 0; font-size: 11px; }
+  .rotulo.hora { font-size: 10px; color: #263238; }
+  .extra { display: grid; gap: 3px; margin-top: 6px; font-size: 14px; }
+  .garreo { background: #c62828; color: #fff; font-weight: 700; padding: 6px 8px; border-radius: 6px; }
+  .ola { font: 600 11px system-ui, sans-serif; white-space: nowrap; text-shadow: 0 0 3px #fff, 0 0 3px #fff; }
+  #capa input[type=range] { width: 100%; margin: 4px 0 0; }
+  #entrar { position: absolute; inset: 0; z-index: 2000; background: var(--fondo); display: flex; align-items: center; justify-content: center; padding: 16px; }
+  #entrar[hidden] { display: none; }              /* el display:flex de arriba le ganaba al hidden */
+  #entrar form { background: var(--caja); border-radius: 10px; padding: 18px; box-shadow: 0 2px 10px rgba(0,0,0,.25); display: grid; gap: 10px; width: 100%; max-width: 320px; }
+  #entrar input, #entrar button { font: inherit; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--tenue); }
+  #entrar label input { padding: 0; margin-right: 6px; }
+  #entrar button { background: var(--acento); color: #fff; border: none; font-weight: 600; cursor: pointer; }
+  .centrar { display: flex; align-items: center; gap: 6px; font: 600 14px system-ui, sans-serif; color: var(--texto);
+             background: var(--caja); border: none; border-radius: 8px; padding: 8px 12px; cursor: pointer;
+             box-shadow: 0 2px 8px rgba(0,0,0,.3); margin-top: max(10px, env(safe-area-inset-top, 0px)) !important; }
+  .opciones { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+  .opciones .centrar { margin-top: 0 !important; }
+  .opciones .panel { background: var(--caja); color: var(--texto); border-radius: 10px; padding: 10px 12px;
+                     box-shadow: 0 2px 10px rgba(0,0,0,.3); font: 14px system-ui, sans-serif; }
+  .anima { display: flex; gap: 12px; font-size: 14px; margin: 4px 0; }
+  .anima input { margin: 0 3px 0 0; }
+  .anima .que { width: 96px; font-weight: 600; }
+  .ley { display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 12px; color: var(--tenue); }
+</style>
+</head>
+<body>
+<div id="mapa"></div>
+<div id="entrar" hidden><form><b>Seguimiento del barco</b><label for="pw">Contraseña</label>
+<input id="pw" type="password" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false" required>
+<label style="font-size:14px"><input id="ver" type="checkbox"> Ver contraseña</label><div class="aviso" id="pwmal"></div><button>Entrar</button></form></div>
+<div id="ficha"><h1><button type="button" id="plegar" aria-expanded="true" title="Encoger o desplegar">Seguimiento del barco <span aria-hidden="true">▾</span></button></h1><div id="txt">Cargando…</div><div class="tenue" id="hora"></div>
+<div id="extra"></div><div id="graf"></div><div id="capa"></div><div id="ruta"></div><div id="riv"></div><div id="met"></div></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+const mapa = L.map('mapa', {zoomControl: false}).setView([36.54, -4.61], 11);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 18,
+  attribution: '© OpenStreetMap · OpenSeaMap'}).addTo(mapa);
+L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {maxZoom: 18}).addTo(mapa);
+const capaEstela = L.layerGroup().addTo(mapa);
+const colVel = v => 'hsl(' + Math.round(240 - Math.min(1, (v || 0) / 8) * 240) + ',85%,45%)';   // 0 kn azul, 8+ rojo
+function pintaEstela(r) {                     // la estela por tramos, del color de la velocidad, y una marca cada hora
+  capaEstela.clearLayers();
+  for (let i = 1; i < r.length; i++)
+    L.polyline([[r[i - 1][1], r[i - 1][2]], [r[i][1], r[i][2]]], {color: colVel(r[i][3]), weight: 4, opacity: .9, interactive: false}).addTo(capaEstela);
+  let ult = null;
+  for (let h = Math.ceil((r.length ? r[0][0] : 0) / 3600) * 3600; r.length && h <= r[r.length - 1][0]; h += 3600) {
+    const q = r.reduce((a, b) => Math.abs(b[0] - h) < Math.abs(a[0] - h) ? b : a);
+    if (Math.abs(q[0] - h) > 1200) continue;                     // sin punto cerca de esa hora
+    if (ult && mapa.distance([ult[1], ult[2]], [q[1], q[2]]) < 300) continue;   // parado: una sola marca
+    ult = q;
+    const d = new Date(h * 1000);
+    L.circleMarker([q[1], q[2]], {radius: 3, color: '#263238', weight: 1, fillColor: '#fff', fillOpacity: 1})
+      .bindTooltip(d.getHours() + 'h', {permanent: true, direction: 'left', className: 'rotulo hora'})
+      .addTo(capaEstela);
+  }
+}
+function grafica(titulo, pts, unidad, color, dec = 1) {   // linea SVG de [t, valor]; nada si no hay datos
+  pts = pts.filter(p => p[1] != null);
+  if (pts.length < 2) return '';
+  const W = 300, H = 56, t0 = pts[0][0], t1 = pts[pts.length - 1][0];
+  const mn = Math.min(...pts.map(p => p[1])), mx = Math.max(...pts.map(p => p[1]));
+  let lo = mn, hi = mx;
+  if (hi - lo < (unidad === 'hPa' ? 2 : 1)) { const m = (hi + lo) / 2; lo = m - 1; hi = m + 1; }
+  const x = t => (t - t0) / Math.max(1, t1 - t0) * W, y = v => H - 4 - (v - lo) / (hi - lo) * (H - 8);
+  const d = pts.map((p, i) => (i ? 'L' : 'M') + x(p[0]).toFixed(1) + ',' + y(p[1]).toFixed(1)).join('');
+  const hora = t => new Date(t * 1000).toLocaleTimeString('es-ES', {hour: '2-digit', minute: '2-digit'});
+  return '<div class="graf"><div class="tenue">' + titulo + ': ahora <b>' + coma(pts[pts.length - 1][1], dec) + ' ' + unidad + '</b> · mín ' +
+    coma(mn, dec) + ' · máx ' + coma(mx, dec) + '</div>' +
+    '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" role="img" aria-label="' + titulo + '"><path d="' + d +
+    '" fill="none" stroke="' + color + '" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>' +
+    '<div class="tenue eje"><span>' + hora(t0) + '</span><span>' + hora(t1) + '</span></div></div>';
+}
+let grafAbierta = false;
+function pintaGrafica(s) {
+  const el = document.getElementById('graf');
+  const h = s && s.length > 1 ? grafica('Velocidad', s.map(p => [p[0], p[1]]), 'kn', '#1565c0') +
+            grafica('Viento', s.map(p => [p[0], p[2]]), 'kn', '#2e7d32') + grafica('Presión', s.map(p => [p[0], p[3]]), 'hPa', '#6a1b9a', 0) : '';
+  el.innerHTML = h ? '<details' + (grafAbierta ? ' open' : '') + '><summary>Gráfica de las últimas 24 h</summary>' + h + '</details>' : '';
+  const dt = el.querySelector('details');
+  if (dt) dt.addEventListener('toggle', e => { grafAbierta = e.target.open; });
+}
+const capaRegata = L.layerGroup().addTo(mapa), capaRivales = L.layerGroup().addTo(mapa);
+const sugerida = L.polyline([], {color: '#1565c0', weight: 3, dashArray: '8 6', opacity: .85}).addTo(mapa);
+// viento (barbas), corriente y ola de las proximas 24 h, de la Pi
+// boton para volver a centrar el mapa en el barco
+const Centrar = L.Control.extend({
+  options: {position: 'topright'},
+  onAdd() {
+    const b = L.DomUtil.create('button', 'centrar');
+    b.type = 'button'; b.title = 'Centrar en el barco'; b.setAttribute('aria-label', 'Centrar en el barco');
+    b.innerHTML = '<svg width="22" height="22" viewBox="-12 -12 24 24" aria-hidden="true"><circle r="6" fill="none" stroke="currentColor" stroke-width="2"/>' +
+      '<circle r="2" fill="currentColor"/><path d="M0,-11V-7M0,7V11M-11,0H-7M7,0H11" stroke="currentColor" stroke-width="2"/></svg> Barco';
+    L.DomEvent.disableClickPropagation(b);
+    L.DomEvent.on(b, 'click', () => { if (barco) mapa.setView(barco.getLatLng(), Math.max(mapa.getZoom(), 11)); });
+    return b;
+  },
+});
+new Centrar().addTo(mapa);
+const capaAis = L.layerGroup(), capaNogo = L.layerGroup();
+const capaViento = L.layerGroup(), capaCorr = L.layerGroup(), capaOlas = L.layerGroup();
+// ANIMACION: particulas que se mueven con el viento o con la corriente (una de las dos, se elige en la ficha)
+// lo que se ve de cada cosa (se elige en la ficha y lo recuerda el navegador)
+let modos = {viento: 'anima', corriente: 'flechas', olas: 'si', ais: 'no', nogo: 'si'};
+try { Object.assign(modos, JSON.parse(localStorage.getItem('modos') || '{}')); } catch (e) {}
+const Flujo = L.Layer.extend({
+  initialize(tipo) { this.tipo = tipo; },
+  onAdd(m) {
+    this.c = L.DomUtil.create('canvas', 'flujo', m.getPanes().overlayPane);
+    this.c.style.pointerEvents = 'none';
+    m.on('movestart zoomstart', this.para, this);
+    m.on('moveend resize', this.arranca, this);
+    this.arranca();
+  },
+  onRemove(m) { this.para(); this.c.remove(); m.off('movestart zoomstart', this.para, this); m.off('moveend resize', this.arranca, this); },
+  para() { cancelAnimationFrame(this.raf); this.raf = 0; if (this.c) this.c.getContext('2d').clearRect(0, 0, this.c.width, this.c.height); },
+  arranca() {
+    this.para();
+    const m = this._map, t = m.getSize(), c = this.c, x = c.getContext('2d');
+    L.DomUtil.setPosition(c, m.containerPointToLayerPoint([0, 0]));
+    c.width = t.x; c.height = t.y;
+    const campo = campoFlujo(this.tipo);
+    if (!campo) return;
+    const viento = this.tipo === 'viento';
+    const nueva = () => ({x: Math.random() * t.x, y: Math.random() * t.y, edad: Math.random() * 100});
+    const ps = Array.from({length: Math.round(t.x * t.y / (viento ? 450 : 350))}, nueva);
+    const paso = () => {
+      x.globalCompositeOperation = 'destination-in';          // estela que se va borrando
+      x.fillStyle = 'rgba(0,0,0,.94)'; x.fillRect(0, 0, t.x, t.y);
+      x.globalCompositeOperation = 'source-over'; x.lineWidth = viento ? 2 : 2.2;
+      for (const p of ps) {
+        const ll = m.containerPointToLatLng([p.x, p.y]), v = campo(ll.lat, ll.lng);
+        if (!v || ++p.edad > 110) { Object.assign(p, nueva(), {edad: 0}); continue; }
+        const k = Math.hypot(v[0], v[1]);
+        if (k < .01) { Object.assign(p, nueva(), {edad: 0}); continue; }
+        // pixeles por fotograma: el viento proporcional; la corriente (decimas de nudo) con un minimo para que se vea moverse
+        const f = viento ? .16 : Math.max(.7, k * 2.2) / k, nx = p.x + v[0] * f, ny = p.y - v[1] * f;
+        x.strokeStyle = viento ? colViento(k) : (k < .5 ? '#4fc3f7' : k < 1 ? '#0288d1' : '#01579b');
+        x.beginPath(); x.moveTo(p.x, p.y); x.lineTo(nx, ny); x.stroke();
+        p.x = nx; p.y = ny;
+        if (p.x < 0 || p.y < 0 || p.x > t.x || p.y > t.y) Object.assign(p, nueva(), {edad: 0});
+      }
+      this.raf = requestAnimationFrame(paso);
+    };
+    this.raf = requestAnimationFrame(paso);
+  },
+});
+const flujoV = new Flujo('viento'), flujoC = new Flujo('corriente');
+// desplegable "Capas" debajo del boton del barco: que se ve de cada cosa
+const Opciones = L.Control.extend({
+  options: {position: 'topright'},
+  onAdd() {
+    const d = L.DomUtil.create('div', 'opciones');
+    d.innerHTML = '<button type="button" class="centrar" aria-expanded="false">☰ Capas</button><div class="panel" hidden>' +
+      [['viento', 'Viento', [['anima', 'Animado'], ['barbas', 'Barbas'], ['no', 'No']]],
+       ['corriente', 'Corriente', [['anima', 'Animada'], ['flechas', 'Flechas'], ['no', 'No']]],
+       ['olas', 'Olas', [['si', 'Sí'], ['no', 'No']]], ['ais', 'AIS', [['si', 'Sí'], ['no', 'No']]],
+       ['nogo', 'Zonas NOGO', [['si', 'Sí'], ['no', 'No']]]].map(([k, n, ops]) => '<div class="anima"><span class="que">' + n + '</span>' +
+        ops.map(([v, t]) => '<label><input type="radio" name="' + k + '" value="' + v + '"' + (modos[k] === v ? ' checked' : '') + '> ' + t + '</label>').join('') +
+        '</div>').join('') + '</div>';
+    L.DomEvent.disableClickPropagation(d); L.DomEvent.disableScrollPropagation(d);
+    const b = d.querySelector('button'), pn = d.querySelector('.panel');
+    b.addEventListener('click', () => { pn.hidden = !pn.hidden; b.setAttribute('aria-expanded', String(!pn.hidden)); });
+    for (const x of d.querySelectorAll('input')) x.addEventListener('change', e => {
+      modos[e.target.name] = e.target.value;
+      try { localStorage.setItem('modos', JSON.stringify(modos)); } catch (y) {}
+      aplicaModos(); pintaCapa();
+    });
+    return d;
+  },
+});
+setTimeout(() => new Opciones().addTo(mapa));     // cuando 'modos' y las capas ya existen
+function aplicaModos() {
+  const pon = (capa, si) => { if (si && !mapa.hasLayer(capa)) capa.addTo(mapa); if (!si && mapa.hasLayer(capa)) mapa.removeLayer(capa); };
+  pon(flujoV, modos.viento === 'anima'); pon(capaViento, modos.viento === 'barbas');
+  pon(flujoC, modos.corriente === 'anima'); pon(capaCorr, modos.corriente === 'flechas');
+  pon(capaOlas, modos.olas === 'si');
+  pon(capaAis, modos.ais === 'si'); pon(capaNogo, modos.nogo === 'si');
+}
+let corrFina = null, corrH = null;
+function preparaCorr(c) {                    // indice de cada celda de mar en los valores de cada paso
+  const idx = new Int32Array(c.ni * c.nj).fill(-1);
+  let k = 0;
+  for (let n = 0; n < c.mar.length; n++) if (c.mar[n] === '1') idx[n] = k++;
+  return Object.assign(c, {idx});
+}
+function campoFino(t) {                       // corriente IBI a ~2,8 km del paso mas cercano a 't'
+  const c = corrFina;
+  if (!c) return null;
+  const p = c.pasos.reduce((a, b) => Math.abs(b.t - t) < Math.abs(a.t - t) ? b : a);
+  const uv = (i, j) => { if (i < 0 || j < 0 || i >= c.ni || j >= c.nj) return null; const k = c.idx[i * c.nj + j]; return k < 0 ? null : [p.uv[2 * k] / 10, p.uv[2 * k + 1] / 10]; };
+  return (la, lo) => {
+    const fi = (la - c.la0) / c.dla, fj = (lo - c.lo0) / c.dlo;
+    if (!uv(Math.round(fi), Math.round(fj))) return null;      // tierra (el punto de la rejilla mas cercano)
+    const i = Math.floor(fi), j = Math.floor(fj), di = fi - i, dj = fj - j;
+    let su = 0, sv = 0, sw = 0;
+    for (const [a, b, w] of [[i, j, (1 - di) * (1 - dj)], [i + 1, j, di * (1 - dj)], [i, j + 1, (1 - di) * dj], [i + 1, j + 1, di * dj]]) {
+      const v = uv(a, b);
+      if (v) { su += v[0] * w; sv += v[1] * w; sw += w; }
+    }
+    return sw > 0 ? [su / sw, sv / sw] : null;
+  };
+}
+function campoFlujo(tipo) {          // (lat, lon) -> [este, norte] en nudos, interpolado en la rejilla; null fuera
+  const p = capa && (capa.pasos.find(x => x.t === pasoT) || capa.pasos[0]);
+  if (!p || tipo === 'nada') return null;
+  if (tipo === 'corriente' && corrFina) return campoFino(p.t);
+  // viento: rejilla de 0,125 grados; corriente: la suya (~0,056), y solo donde la hay (en tierra no)
+  const fina = tipo === 'corriente' && p.corr && p.corr.length;
+  const pts = fina ? p.corr.map(c => [c[0], c[1], c[2], c[3]]) : p.puntos.map(q => tipo === 'viento' ? [q[0], q[1], q[2], q[3] + 180] : [q[0], q[1], q[4], q[5]]);
+  // paso de la rejilla: (ultimo - primero) / (n - 1), en lat y en lon por separado (los valores vienen redondeados)
+  const paso = i => { const v = [...new Set(pts.map(q => q[i]))].sort((a, b) => a - b); return v.length > 1 ? (v[v.length - 1] - v[0]) / (v.length - 1) : .125; };
+  const DA = fina ? paso(0) : .125, DO = fina ? paso(1) : .125;
+  const la0 = Math.min(...pts.map(q => q[0])), lo0 = Math.min(...pts.map(q => q[1])), g = new Map(), minimo = fina ? .01 : .25;
+  for (const [la, lo, kn, a] of pts) {                            // a: hacia donde va
+    if (kn == null || a == null) continue;
+    const r = a * Math.PI / 180;
+    g.set(Math.round((la - la0) / DA) + ',' + Math.round((lo - lo0) / DO), [kn * Math.sin(r), kn * Math.cos(r)]);
+  }
+  return (la, lo) => {
+    const fi = (la - la0) / DA, fj = (lo - lo0) / DO, i = Math.floor(fi), j = Math.floor(fj), di = fi - i, dj = fj - j;
+    let su = 0, sv = 0, sw = 0;
+    for (const [a, b, w] of [[i, j, (1 - di) * (1 - dj)], [i + 1, j, di * (1 - dj)], [i, j + 1, (1 - di) * dj], [i + 1, j + 1, di * dj]]) {
+      const v = g.get(a + ',' + b);
+      if (v) { su += v[0] * w; sv += v[1] * w; sw += w; }
+    }
+    // corriente: solo si el punto de la rejilla mas cercano es mar (en el Estrecho a veces solo hay una fila)
+    if (fina && !g.has(Math.round(fi) + ',' + Math.round(fj))) return null;
+    return sw >= minimo ? [su / sw, sv / sw] : null;
+  };
+}
+mapa.on('click', e => {             // tocar el mapa: viento, corriente y ola de ese punto
+  const p = capa && (capa.pasos.find(x => x.t === pasoT) || capa.pasos[0]);
+  if (!p) return;
+  let q = null, dm = 1e9;
+  for (const x of p.puntos) { const d = Math.hypot(x[0] - e.latlng.lat, (x[1] - e.latlng.lng) * .8); if (d < dm) { dm = d; q = x; } }
+  if (!q || dm > .2) return;
+  const fc = corrFina && campoFino(p.t), cv = fc && fc(e.latlng.lat, e.latlng.lng);
+  if (cv) { q = q.slice(); q[4] = Math.hypot(cv[0], cv[1]); q[5] = Math.round((Math.atan2(cv[0], cv[1]) * 180 / Math.PI + 360) % 360); }
+  else if (fc) { q = q.slice(); q[4] = q[5] = null; }
+  L.popup().setLatLng(e.latlng).setContent(textoPunto(q) + '<br><span style="color:#5b6b76">' + fecha(p.t * 1000) + '</span>').openOn(mapa);
+});
+function textoPunto(q) {
+  const [la, lo, kn, de, ck, ch, hs, tp, od] = q;
+  let t = 'Viento <b>' + Math.round(kn) + ' nudos</b> del ' + de + '°';
+  if (ck != null) t += '<br>Corriente <b>' + coma(ck) + ' nudos</b> hacia ' + ch + '°';
+  if (hs != null) t += '<br>Ola <b>' + coma(hs) + ' m</b>' + (tp ? ' cada ' + Math.round(tp) + ' s' : '') + (od != null ? ' del ' + od + '°' : '');
+  return t;
+}
+let capa = null, pasoT = null;
+const colViento = k => k < 10 ? '#2e7d32' : k < 16 ? '#b58900' : k < 22 ? '#e65100' : '#c62828';
+const colOla = h => h < 1 ? '#1565c0' : h < 2 ? '#e65100' : '#c62828';
+function barba(kn, de) {                     // barba meteorologica: el palo apunta de donde viene
+  const c = colViento(kn);
+  let h = '', n = Math.round(kn / 5) * 5, y = -22;
+  if (n < 5) h = '<circle r="5" fill="none"/>';
+  else {
+    h = '<line x1="0" y1="0" x2="0" y2="-22"/>';
+    while (n >= 50) { h += '<path d="M0,' + y + ' L10,' + (y - 3) + ' L0,' + (y + 5) + ' Z" fill="' + c + '"/>'; y += 7; n -= 50; }
+    while (n >= 10) { h += '<line x1="0" y1="' + y + '" x2="10" y2="' + (y - 5) + '"/>'; y += 4; n -= 10; }
+    if (n >= 5) { if (y === -22) y += 4; h += '<line x1="0" y1="' + y + '" x2="5" y2="' + (y - 2.5) + '"/>'; }
+  }
+  return L.divIcon({className: '', iconSize: [52, 52], iconAnchor: [26, 26], html: '<svg width="52" height="52" viewBox="-26 -26 52 52">' +
+    '<g transform="rotate(' + de + ')" stroke="' + c + '" stroke-width="1.8" stroke-linecap="round">' + h + '</g>' +
+    '<circle r="1.8" fill="' + c + '"/></svg>'});
+}
+function flechaCorr(kn, hacia) {             // flecha hacia donde va el agua y su velocidad en nudos
+  const l = Math.min(24, 8 + kn * 10), c = kn < .5 ? '#0288d1' : kn < 1 ? '#0277bd' : '#01579b';
+  return L.divIcon({className: '', iconSize: [52, 52], iconAnchor: [26, 26], html: '<svg width="52" height="52" viewBox="-26 -26 52 52" style="overflow:visible">' +
+    '<g transform="rotate(' + hacia + ')" stroke="' + c + '" fill="' + c + '" stroke-width="2.4" stroke-linecap="round">' +
+    '<line x1="0" y1="' + (l / 2) + '" x2="0" y2="' + (-l / 2) + '"/><path d="M0,' + (-l / 2 - 5) + ' L-5,' + (-l / 2 + 2) + ' L5,' + (-l / 2 + 2) + ' Z" stroke="none"/></g>' +
+    '<text x="7" y="16" font-size="11" font-weight="700" fill="' + c + '" stroke="#fff" stroke-width="3" paint-order="stroke">' + coma(kn) + '</text></svg>'});
+}
+const celda = v => Math.floor(v / .125 + .1);     // fila o columna de la rejilla de 0,125 grados
+function pintaCapa() {
+  for (const g of [capaViento, capaCorr, capaOlas]) g.clearLayers();
+  const p = capa && (capa.pasos.find(x => x.t === pasoT) || capa.pasos[0]);
+  if (!p) return;
+  const z = mapa.getZoom(), k = z >= 9 ? 1 : z >= 8 ? 2 : z >= 7 ? 4 : 8, fino = corrFina && campoFino(p.t);
+  for (const q of p.puntos) {
+    const [la, lo, kn, de, ck, ch, hs, tp, od] = q;
+    if (celda(la) % k || celda(lo) % k) continue;
+    L.marker([la, lo], {icon: barba(kn, de)}).bindTooltip(textoPunto(q)).addTo(capaViento);
+    // entre las barbas (a media celda en diagonal) van la corriente o la ola, nunca las dos en el mismo sitio:
+    // en una de cada dos medias filas, una de cada dos va para la ola (si las olas se ven)
+    const fi = Math.round(celda(la) / k), fj = Math.round(celda(lo) / k), fla = la + .0625 * k, flo = lo + .0625 * k;
+    const esOla = modos.olas === 'si' && !(fi % 2) && !(fj % 2);
+    if (esOla && hs != null) L.marker([fla, flo], {interactive: false, icon: L.divIcon({className: 'ola', iconSize: [80, 14], iconAnchor: [40, 7],
+      html: '<div style="text-align:center;color:' + colOla(hs) + '">' + (od != null ? '<span style="display:inline-block;transform:rotate(' + (od + 180) + 'deg)">↑</span>' : '') +
+            coma(hs) + ' m' + (tp ? ' ' + Math.round(tp) + ' s' : '') + '</div>'})}).addTo(capaOlas);
+    if (!esOla) {          // valor de la corriente fina en ese punto (la de la rejilla del viento si no la hay)
+      const v = fino && fino(fla, flo);
+      const kc = v ? Math.hypot(v[0], v[1]) : (fino ? null : ck), hc = v ? (Math.atan2(v[0], v[1]) * 180 / Math.PI + 360) % 360 : ch;
+      if (kc != null && kc >= 0.1) L.marker([fla, flo], {icon: flechaCorr(kc, Math.round(hc)), interactive: false}).addTo(capaCorr);
+    }
+  }
+  const lb = document.getElementById('capaHora');
+  if (lb) lb.textContent = fecha(p.t * 1000);
+  aplicaModos();
+  for (const f of [flujoV, flujoC]) if (f._map) f.arranca();
+}
+mapa.on('zoomend', pintaCapa);
+function montaCapa(c) {
+  capa = c && c.pasos && c.pasos.length ? c : null;
+  const el = document.getElementById('capa');
+  if (!capa) { el.innerHTML = ''; pintaCapa(); return; }
+  const ts = capa.pasos.map(x => x.t);
+  if (!ts.includes(pasoT)) {                   // el paso mas cercano a ahora
+    const ahora = Date.now() / 1000;
+    pasoT = ts.reduce((a, b) => Math.abs(b - ahora) < Math.abs(a - ahora) ? b : a);
+  }
+  el.innerHTML = '<details open style="margin-top:6px"><summary>Viento, corriente y ola: <span id="capaHora"></span></summary>' +
+    '<input type="range" min="0" max="' + (ts.length - 1) + '" step="1" value="' + ts.indexOf(pasoT) + '" aria-label="Hora de la previsión">' +
+    '<div class="ley"><span>viento: <b style="color:#2e7d32">flojo</b> <b style="color:#b58900">medio</b> <b style="color:#e65100">fresco</b> <b style="color:#c62828">fuerte</b></span>' +
+    '<span>corriente: <b style="color:#4fc3f7">débil</b> <b style="color:#01579b">fuerte</b></span>' +
+    '<span><b style="color:#1565c0">↑ 1,2 m 9 s</b> ola</span><span>Toca el mapa para ver los datos de un punto</span></div></details>';
+  el.querySelector('input[type=range]').addEventListener('input', e => { pasoT = ts[+e.target.value]; pintaCapa(); });
+  pintaCapa();
+}
+const fecha = ms => new Date(ms).toLocaleString('es-ES', {weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'});
+let metAbierto = false;
+let barco = null, primera = true;
+const VERSION = '5a91b5b5';              // la pone seguimiento.py al subir
+const coma = (x, d = 1) => x == null ? '–' : x.toFixed(d).replace('.', ',');
+const hace = s => s < 90 ? 'hace un momento' : s < 5400 ? 'hace ' + Math.round(s / 60) + ' min'
+                : s < 172800 ? 'hace ' + Math.round(s / 3600) + ' h' : 'hace ' + Math.round(s / 86400) + ' días';
+function icono(rumbo, color = '#c0392b', t = 28) {
+  return L.divIcon({className: '', iconSize: [t, t], iconAnchor: [t / 2, t / 2], html:
+    '<svg width="' + t + '" height="' + t + '" viewBox="-14 -14 28 28" style="transform:rotate(' + (rumbo || 0) + 'deg)">' +
+    '<path d="M0,-12 L7,9 L0,5 L-7,9 Z" fill="' + color + '" stroke="#fff" stroke-width="1.5"/></svg>'});
+}
+const esc = t => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+function pintaRegata(g) {
+  capaRegata.clearLayers();
+  if (!g) return;
+  if (g.comite && g.boya) L.polyline([g.comite, g.boya], {color: '#111', weight: 2, dashArray: '6 4'}).addTo(capaRegata);
+  for (const [n, p] of [['Comité', g.comite], ['Boya de salida', g.boya]])
+    if (p) L.circleMarker(p, {radius: 5, color: '#111', fillColor: '#ffd400', fillOpacity: 1}).bindTooltip(n).addTo(capaRegata);
+  for (const m of g.marcas || [])
+    L.circleMarker([m[1], m[2]], {radius: 7, color: '#111', fillColor: '#ff8c00', fillOpacity: 1})
+      .bindTooltip(esc(m[0]), {permanent: true, direction: 'right', className: 'rotulo'}).addTo(capaRegata);
+}
+// rotulo de un barco: el nombre; rumbo (proa, o el GPS) y velocidad; angulo al viento real con la banda y su fuerza
+//   BravoSports / 120° · 5,2 kn / 45° Er · 14 kn
+function lineaRumbo(u, viento, nombre) {
+  const rb = u.proa != null ? u.proa : u.cog, l2 = [], l3 = [];
+  if (rb != null) l2.push(Math.round(rb) + '°');
+  if (u.sog != null) l2.push(coma(u.sog) + ' kn');
+  if (rb != null && viento && viento.de != null) {
+    const a = ((viento.de - rb + 540) % 360) - 180;          // + : el viento entra por estribor
+    l3.push(Math.abs(Math.round(a)) + '°' + (Math.abs(a) < 1 || Math.abs(a) > 179 ? '' : a > 0 ? ' Er' : ' Br'));
+  }
+  if (viento && viento.kn != null) l3.push(Math.round(viento.kn) + ' kn');
+  return [nombre ? '<b>' + esc(nombre) + '</b>' : '', l2.join(' · '), l3.length ? 'viento ' + l3.join(' · ') : '']
+    .filter(Boolean).join('<br>');
+}
+function vientoEn(la, lo) {                    // de donde viene el viento de la prevision de ahora en ese punto
+  if (!capa) return null;
+  const ahora = Date.now() / 1000, p = capa.pasos.reduce((a, b) => Math.abs(b.t - ahora) < Math.abs(a.t - ahora) ? b : a);
+  let q = null, dm = .3;
+  for (const x of p.puntos) { const d = Math.hypot(x[0] - la, (x[1] - lo) * .8); if (d < dm) { dm = d; q = x; } }
+  return q ? {de: q[3], kn: q[2]} : null;
+}
+function pintaAis(bs) {                      // los demas barcos del AIS: triangulos grises con nombre y velocidad al tocar
+  capaAis.clearLayers();
+  for (const [n, la, lo, sog, rb] of bs || []) {
+    if (rb != null && sog >= .5) {             // donde estara dentro de 10 minutos a este rumbo y velocidad
+      const d = sog * 10 / 60 / 60, r = rb * Math.PI / 180;    // millas -> grados de latitud
+      L.polyline([[la, lo], [la + d * Math.cos(r), lo + d * Math.sin(r) / Math.cos(la * Math.PI / 180)]],
+                 {color: '#37474f', weight: 2, dashArray: '4 4', interactive: false}).addTo(capaAis);
+    }
+    L.marker([la, lo], {icon: icono(rb, '#546e7a', 24)}).bindTooltip('<b>' + esc(n) + '</b> · ' + coma(sog) + ' kn' + (rb != null ? ' · ' + Math.round(rb) + '°' : ''))
+      .addTo(capaAis);
+  }
+}
+function pintaNogo(zs) {                     // zonas prohibidas de la app: rojo rayado
+  capaNogo.clearLayers();
+  for (const [n, pol] of zs || []) {
+    L.polygon(pol, {color: '#d32f2f', weight: 2, fillColor: '#ff1744', fillOpacity: .3, dashArray: '6 4'})
+      .bindTooltip('⛔ ' + esc(n)).addTo(capaNogo);
+    // las bateas y almadrabas miden cientos de metros: un punto en el centro para verlas con el mapa alejado
+    const c = pol.reduce((a, q) => [a[0] + q[0] / pol.length, a[1] + q[1] / pol.length], [0, 0]);
+    L.circleMarker(c, {radius: 5, color: '#fff', weight: 1.5, fillColor: '#d32f2f', fillOpacity: 1}).bindTooltip('⛔ ' + esc(n)).addTo(capaNogo);
+  }
+}
+const capaFondeo = L.layerGroup().addTo(mapa);
+function pintaExtra(d) {                    // garreo, viaje, resumen de hoy y datos de a bordo
+  const h = [], f = d.fondeo, v = d.viaje, hoy = d.hoy, bo = d.bordo || {};
+  capaFondeo.clearLayers();
+  if (f) {
+    const est = {color: f.fuera ? '#c62828' : '#6d4c41', weight: 2, fillOpacity: .08, dashArray: '5 5'};
+    const rad = f.sectores ? Math.round(f.corto) + '/' + Math.round(f.radio) : Math.round(f.radio);
+    if (f.sectores) {                         // 8 sectores de 45° desde el ancla (bit 0 = N): los marcados, radio corto
+      const pts = [];
+      for (let s = 0; s < 8; s++) {
+        const r = (f.sectores >> s) & 1 ? f.corto : f.radio;
+        for (let g = s * 45 - 22.5; g <= s * 45 + 22.5; g += 2.5) {
+          const a = g * Math.PI / 180;
+          pts.push([f.lat + r * Math.cos(a) / 111320, f.lon + r * Math.sin(a) / (111320 * Math.cos(f.lat * Math.PI / 180))]);
+        }
+      }
+      L.polygon(pts, est).bindTooltip('⚓ Fondeo, radios ' + rad + ' m').addTo(capaFondeo);
+    } else L.circle([f.lat, f.lon], Object.assign({radius: f.radio}, est)).bindTooltip('⚓ Fondeo, radio ' + rad + ' m').addTo(capaFondeo);
+    h.push(f.fuera ? '<div class="garreo">🚨 ¡GARREO! El barco está a ' + f.dist + ' m del fondeo (límite por ese lado ' + Math.round(f.limite || f.radio) + ' m)</div>'
+                   : '<div>⚓ Fondeado: a ' + f.dist + ' m del punto (radio ' + rad + ' m)</div>');
+  }
+  if (v) h.push('<div>🧭 ' + (v.destino ? esc(v.destino) + ': ' : '') + 'faltan <b>' + coma(v.millas) + ' mn</b>' +
+                (v.eta ? ', a esta velocidad llega hacia el <b>' + fecha(v.eta * 1000) + '</b>' : '') + '</div>');
+  if (hoy && hoy.millas >= .1) {
+    const hn = hoy.seg / 3600;
+    h.push('<div>📈 Hoy: <b>' + coma(hoy.millas) + ' mn</b> · máx ' + coma(hoy.max) + ' kn' +
+           (hn >= .1 ? ' · media ' + coma(hoy.millas / hn) + ' kn · ' + Math.floor(hn) + ' h ' + Math.round(hn % 1 * 60) + ' min navegando' : '') + '</div>');
+  }
+  const a = [];
+  if (bo.presion != null) a.push(Math.round(bo.presion) + ' hPa' + (bo.tend3h != null ? ' ' + (bo.tend3h > .5 ? '↑' : bo.tend3h < -.5 ? '↓' : '→') +
+                            ' ' + (bo.tend3h > 0 ? '+' : '') + coma(bo.tend3h) + ' en 3 h' : '') + (bo.fuente === 'previsión' ? ' (previsión)' : ''));
+  if (bo.agua != null) a.push('agua ' + coma(bo.agua) + ' °C');
+  if (bo.fondo != null) a.push('fondo ' + coma(bo.fondo) + ' m');
+  if (bo.bateria != null || bo.voltios != null) a.push('batería ' + (bo.bateria != null ? bo.bateria + ' %' : '') + (bo.voltios != null ? ' ' + coma(bo.voltios, 2) + ' V' : ''));
+  if (a.length) h.push('<div>⛵ ' + a.join(' · ') + '</div>');
+  const ma = d.mareas;
+  if (ma && ma.ex && ma.ex.length) {
+    const hh = t => new Date(t * 1000).toLocaleTimeString('es-ES', {hour: '2-digit', minute: '2-digit'});
+    h.push('<div>🌊 Mareas (' + esc(ma.lugar) + '): ' + ma.ex.slice(0, 4).map(e => (e[2] ? '▲ ' : '▼ ') + hh(e[0]) + ' ' +
+           (e[1] > 0 ? '+' : '') + coma(e[1], 2) + ' m').join(' · ') + '</div>');
+  }
+  document.getElementById('extra').innerHTML = h.length ? '<div class="extra">' + h.join('') + '</div>' : '';
+}
+function pintaRivales(rs) {
+  capaRivales.clearLayers();
+  const filas = [];
+  for (const r of rs || []) {
+    if (r.estela && r.estela.length > 1) L.polyline(r.estela.map(q => [q[1], q[2]]), {color: '#7b1fa2', weight: 2, opacity: .7}).addTo(capaRivales);
+    L.marker([r.lat, r.lon], {icon: icono(r.proa != null ? r.proa : r.cog, '#7b1fa2', 22)})
+      .bindTooltip(lineaRumbo(r, vientoEn(r.lat, r.lon), r.nombre), {permanent: true, direction: 'right', offset: [8, 0], className: 'rotulo'}).addTo(capaRivales);
+    filas.push('<tr><td>' + esc(r.nombre) + '</td><td>' + coma(r.sog) + ' nudos</td><td>' + (r.cog != null ? Math.round(r.cog) + '°' : '') + '</td></tr>');
+  }
+  document.getElementById('riv').innerHTML = filas.length ? '<details open><summary>Rivales</summary><table>' + filas.join('') + '</table></details>' : '';
+}
+function pintaMeteo(m) {
+  const el = document.getElementById('met');
+  if (!m || (!m.bloques && !m.avisos)) { el.innerHTML = ''; return; }
+  let h = '';
+  if (m.aviso) h += '<div class="aviso">⚠ ' + esc(m.aviso) + '</div>';
+  for (const a of m.avisos || []) h += '<div class="aviso">⚠ ' + esc(a) + '</div>';
+  if (m.bloques && m.bloques.length) {
+    h += '<table>' + m.bloques.map(b => '<tr><td>' + esc(b.etiqueta) + '</td><td>' + esc(b.cardinal) + ' ' + Math.round(b.kn) +
+         ' kn</td><td>racha ' + Math.round(b.racha) + '</td><td>' + (b.hs != null ? 'ola ' + coma(b.hs) + ' m' + (b.tp ? ' ' + Math.round(b.tp) + ' s' : '') : '') +
+         '</td></tr>').join('') + '</table>';
+    h += '<div class="tenue">Previsión ' + esc(m.modelo || '') + (m.lugar ? ', ' + esc(m.lugar) : '') + '</div>';
+  }
+  el.innerHTML = '<details' + (metAbierto ? ' open' : '') + '><summary>Previsión y avisos</summary>' + h + '</details>';
+  el.querySelector('details').addEventListener('toggle', e => { metAbierto = e.target.open; });
+}
+// datos cifrados (AES-GCM con clave PBKDF2 de la contraseña); la contraseña se recuerda en este navegador
+let pw = null, llave = null, llaveDe = null;
+try { pw = localStorage.getItem('pw'); } catch (e) {}
+function claveDelEnlace() {                    // enlace con la contrasena: .../#contrasena (sin teclearla)
+  if (location.hash.length < 2) return false;
+  pw = decodeURIComponent(location.hash.slice(1)).replace(/\s+/g, '').toLowerCase();
+  try { localStorage.setItem('pw', pw); } catch (e) {}
+  history.replaceState(null, '', location.pathname + location.search);   // que no se quede a la vista
+  document.getElementById('entrar').hidden = true;
+  return true;
+}
+claveDelEnlace();
+addEventListener('hashchange', () => { if (claveDelEnlace()) carga(); });   // pegado en una pestaña ya abierta
+async function abre(c) {
+  const b = t => Uint8Array.from(atob(t), x => x.charCodeAt(0));
+  if (llaveDe !== pw + c.sal) {
+    const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveKey']);
+    llave = await crypto.subtle.deriveKey({name: 'PBKDF2', salt: b(c.sal), iterations: 200000, hash: 'SHA-256'}, base,
+                                          {name: 'AES-GCM', length: 256}, false, ['decrypt']);
+    llaveDe = pw + c.sal;
+  }
+  let buf = await crypto.subtle.decrypt({name: 'AES-GCM', iv: b(c.iv)}, llave, b(c.datos));
+  if (c.z) buf = await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('deflate'))).arrayBuffer();
+  return JSON.parse(new TextDecoder().decode(buf));
+}
+function pideClave(error) {
+  pw = null; llaveDe = null;
+  try { localStorage.removeItem('pw'); } catch (e) {}
+  document.getElementById('pwmal').textContent = error;
+  document.getElementById('entrar').hidden = false;
+  document.getElementById('pw').focus();
+}
+document.querySelector('#entrar form').addEventListener('submit', e => {
+  e.preventDefault();
+  pw = document.getElementById('pw').value.replace(/\s+/g, '').toLowerCase();   // igual que la Pi: sin espacios ni mayusculas
+  try { localStorage.setItem('pw', pw); } catch (e) {}
+  document.getElementById('entrar').hidden = true;
+  carga();
+});
+document.getElementById('ver').addEventListener('change', e => { document.getElementById('pw').type = e.target.checked ? 'text' : 'password'; });
+async function carga() {
+  let d;
+  try { d = await (await fetch('datos.json?t=' + Date.now(), {cache: 'no-store'})).json(); }
+  catch (e) { document.getElementById('txt').textContent = 'Aún no hay datos.'; return; }
+  // copia vieja de la pagina (cache del navegador): se pide la nueva con otra URL, una sola vez por version
+  if (d.pagina && d.pagina !== VERSION && !location.search.includes('v=' + d.pagina)) {
+    location.replace(location.pathname + '?v=' + d.pagina); return;
+  }
+  if (d.cifrado) {
+    if (!pw) { pideClave(''); return; }
+    try { d = await abre(d.cifrado); }
+    catch (e) { pideClave((e && e.name === 'OperationError' ? 'Contraseña incorrecta' : 'No se pueden abrir los datos: ' + e) +
+                          ' (' + pw.length + ' letras, versión ' + VERSION + ')'); return; }
+  }
+  const ru = d.ruta;
+  sugerida.setLatLngs(ru ? ru.puntos : []);
+  document.getElementById('ruta').innerHTML = ru ? '<div style="margin-top:6px"><span style="color:#1565c0">▬ ▬</span> Ruta prevista' +
+      (ru.destino ? ' a <b>' + esc(ru.destino) + '</b>' : '') + (ru.llegada ? ': llegada hacia el <b>' + fecha(ru.llegada) + '</b>' : '') + '</div>' : '';
+  if (d.corriente && d.corriente !== corrH) {            // corriente fina: fichero aparte, solo cuando cambia (una vez al dia)
+    try {
+      let c = await (await fetch('corriente.json?h=' + d.corriente)).json();
+      if (c.cifrado) c = await abre(c.cifrado);
+      corrFina = preparaCorr(c); corrH = d.corriente;
+    } catch (e) { corrFina = null; }
+  }
+  pintaRegata(d.regata);
+  montaCapa(d.capa);                       // antes que los rivales: su angulo al viento sale de la prevision
+  pintaRivales(d.rivales);
+  pintaAis(d.ais);
+  pintaExtra(d);
+  pintaNogo(d.nogo);
+  aplicaModos();
+  pintaMeteo(d.meteo);
+  const r = d.rastro || [];
+  pintaEstela(r);
+  pintaGrafica(d.serie);
+  const u = d.barco || (r.length ? {lat: r[r.length - 1][1], lon: r[r.length - 1][2], t: r[r.length - 1][0]} : null);
+  if (!u) { document.getElementById('txt').textContent = 'Sin posición.'; return; }
+  if (!barco) barco = L.marker([u.lat, u.lon]).addTo(mapa);
+  barco.setLatLng([u.lat, u.lon]).setIcon(icono(u.proa != null ? u.proa : u.cog));   // la proa del compas; parado el rumbo GPS no vale
+  const vg = vientoEn(u.lat, u.lon);              // el real de los instrumentos; si falta, el de la prevision
+  const lr = lineaRumbo(u, {de: u.twd != null ? u.twd : vg && vg.de, kn: u.tws != null ? u.tws : vg && vg.kn}, u.nombre || 'Mi barco');
+  if (lr && !barco.getTooltip()) barco.bindTooltip('', {permanent: true, direction: 'right', offset: [12, 0], className: 'rotulo rotuloBarco'});
+  if (barco.getTooltip()) barco.setTooltipContent(lr || '');
+  if (primera) {                                    // al abrir: todo el rastro (o el barco si no hay)
+    const caja = L.latLngBounds([[u.lat, u.lon]]);              // rastro, regata y rivales
+    for (const q of r) caja.extend([q[1], q[2]]);
+    if (ru) for (const q of ru.puntos) caja.extend(q);
+    capaRegata.eachLayer(l => caja.extend(l.getLatLng ? l.getLatLng() : l.getBounds()));
+    capaRivales.eachLayer(l => caja.extend(l.getLatLng ? l.getLatLng() : l.getBounds()));
+    const tapa = document.getElementById('ficha').offsetHeight + 30;
+    mapa.fitBounds(caja, {maxZoom: 13, paddingTopLeft: [40, 40], paddingBottomRight: [40, tapa]});
+    primera = false;
+  }
+  const edad = Date.now() / 1000 - u.t;
+  const p = [];
+  if (u.sog != null) p.push('<span>Velocidad <b>' + coma(u.sog) + ' nudos</b></span>');
+  if (u.cog != null && (u.sog || 0) > 0.5) p.push('<span>Rumbo <b>' + Math.round(u.cog) + '°</b></span>');
+  if (u.tws != null) p.push('<span>Viento <b>' + Math.round(u.tws) + ' nudos</b>' + (u.twd != null ? ' del ' + Math.round(u.twd) + '°' : '') + '</span>');
+  document.getElementById('txt').innerHTML = '<div class="datos">' + (p.join('') || 'En puerto o parado') + '</div>';
+  const h = document.getElementById('hora');
+  h.textContent = 'Última posición ' + hace(edad) + ' · ' + new Date(u.t * 1000).toLocaleString('es-ES', {day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit'}) +
+    (u.fuente === 'ais' ? ' · por AIS: el barco está sin internet' : '');
+  h.className = edad > 7200 ? 'tenue viejo' : 'tenue';
+  if (d.ejemplo) { h.textContent = 'DATOS DE EJEMPLO: la Pi del barco aún no ha subido los reales'; h.className = 'tenue viejo'; }
+}
+{                                                // ficha plegable; el navegador lo recuerda
+  const f = document.getElementById('ficha'), b = document.getElementById('plegar');
+  const pon = p => { f.classList.toggle('plegada', p); b.setAttribute('aria-expanded', String(!p)); };
+  try { pon(localStorage.getItem('plegada') === '1'); } catch (e) {}
+  b.addEventListener('click', () => {
+    const p = !f.classList.contains('plegada'); pon(p);
+    try { localStorage.setItem('plegada', p ? '1' : '0'); } catch (e) {}
+  });
+}
+carga();
+setInterval(carga, 60000);                      // la Pi sube cada 2 min navegando
+</script>
+</body>
+</html>
